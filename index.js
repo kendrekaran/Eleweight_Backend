@@ -9,21 +9,18 @@ require('dotenv').config();
 
 const app = express();
 app.use(express.json());
-app.use(cors())
+
+app.use(cors({
+    origin: '*',
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization']
+}));
+
 
 const JWT_SECRET = process.env.JWT_SECRET
 const SALT_ROUNDS = 10
-const PORT = process.env.PORT || 3000;
 
-const mongooseOptions = {
-    useNewUrlParser: true,
-    useUnifiedTopology: true,
-    serverSelectionTimeoutMS: 5000,
-    socketTimeoutMS: 45000,
-};
-
-
-mongoose.connect(process.env.MONGO_URI, mongooseOptions)
+mongoose.connect(process.env.MONGO_URI)
     .then(() => console.log("Connected to MongoDB"))
     .catch((error) => console.error("MongoDB connection error: ", error));
 
@@ -215,11 +212,3 @@ app.put("/profile", authenticateToken, async (req,res,next) =>{
 
 app.use(errorHandeling)
  
-
-module.exports = app;
-
-if (require.main === module) {
-    app.listen(PORT, () => {
-        console.log(`Server is running on port ${PORT}`);
-    });
-}
