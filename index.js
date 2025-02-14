@@ -13,8 +13,17 @@ app.use(cors())
 
 const JWT_SECRET = process.env.JWT_SECRET
 const SALT_ROUNDS = 10
+const PORT = process.env.PORT || 3000;
 
-mongoose.connect(process.env.MONGO_URI)
+const mongooseOptions = {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+    serverSelectionTimeoutMS: 5000,
+    socketTimeoutMS: 45000,
+};
+
+
+mongoose.connect(process.env.MONGO_URI, mongooseOptions)
     .then(() => console.log("Connected to MongoDB"))
     .catch((error) => console.error("MongoDB connection error: ", error));
 
@@ -206,6 +215,11 @@ app.put("/profile", authenticateToken, async (req,res,next) =>{
 
 app.use(errorHandeling)
  
-app.listen(3000,() =>{
-    console.log("Server is running")
-})
+
+module.exports = app;
+
+if (require.main === module) {
+    app.listen(PORT, () => {
+        console.log(`Server is running on port ${PORT}`);
+    });
+}
