@@ -11,7 +11,8 @@ const app = express();
 app.use(express.json());
 
 app.use(cors({
-    origin : "*"
+    origin: ['https://eleweight-backend1.vercel.app', '*'],
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']
 }));
 
 const JWT_SECRET = process.env.JWT_SECRET
