@@ -10,9 +10,7 @@ require('dotenv').config();
 const app = express();
 app.use(express.json());
 
-app.use(cors({
-    origin: "*"
-}));
+app.use(cors());
 
 const JWT_SECRET = process.env.JWT_SECRET
 const SALT_ROUNDS = 10
