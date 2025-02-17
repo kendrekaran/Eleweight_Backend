@@ -5,6 +5,7 @@ const mongoose = require('mongoose');
 const ProfileModel = require('./Models/profiles');
 const jwt = require("jsonwebtoken")
 const cors = require("cors")
+const path = require('path');
 require('dotenv').config();
 
 const app = express();
@@ -14,6 +15,8 @@ app.use(cors(
     origin = "*"
 ));
 
+
+
 const JWT_SECRET = process.env.JWT_SECRET
 const SALT_ROUNDS = 10
 
@@ -21,12 +24,15 @@ mongoose.connect(process.env.MONGO_URI)
     .then(() => console.log("Connected to MongoDB"))
     .catch((error) => console.error("MongoDB connection error: ", error));
 
+app.use(express.static(path.join(__dirname, 'dist')));
 
-const userSchema = z.object({
-    name : z.string().min(4).max(20),
-    email : z.string().min(10).max(30).email(),
-    password :z.string().min(6).max(20)
-})
+
+
+    const userSchema = z.object({
+        name: z.string().min(4).max(20),
+        email: z.string().min(10).max(30).email(),
+        password: z.string().min(6).max(20)
+    })
 
 const updatedSchema = z.object({
     name : z.string().min(4).max(20),
@@ -210,6 +216,10 @@ app.put("/profile", authenticateToken, async (req,res,next) =>{
         next(error)
     }
 })
+
+app.get('*', (req, res) => {
+    res.sendFile(path.join(__dirname, 'dist', 'index.html'));
+});
 
 app.use(errorHandeling)
  
