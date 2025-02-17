@@ -10,13 +10,7 @@ require('dotenv').config();
 const app = express();
 app.use(express.json());
 
-app.use(cors({
-    origin: '*',
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization']
-}));
-
-app.use(express.static(path.join(__dirname, 'dist')));
+app.use(cors());
 
 
 const JWT_SECRET = process.env.JWT_SECRET
