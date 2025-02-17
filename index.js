@@ -14,7 +14,6 @@ app.use(cors(
     origin = "*"
 ));
 
-
 const JWT_SECRET = process.env.JWT_SECRET
 const SALT_ROUNDS = 10
 
