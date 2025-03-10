@@ -3,6 +3,7 @@ const {z} = require('zod')
 const bcrypt = require('bcrypt')
 const mongoose = require('mongoose');
 const ProfileModel = require('./Models/profiles');
+const WorkoutPlanModel = require('./Models/workoutPlans');
 const jwt = require("jsonwebtoken")
 const cors = require("cors")
 require('dotenv').config();
@@ -63,12 +64,34 @@ const authenticateToken = (req,res,next) => {
     }
 }
 
-const errorHandeling = (err, req, res, next) =>{
-    console.error(err.stack)
+const errorHandeling = (err, req, res, next) => {
+    console.error(err.stack);
+    
+    // Handle Zod validation errors
+    if (err.name === 'ZodError') {
+        return res.status(400).json({
+            message: "Validation Error",
+            errors: err.errors
+        });
+    }
+    
+    // Handle Mongoose validation errors
+    if (err.name === 'ValidationError') {
+        const errors = {};
+        for (const field in err.errors) {
+            errors[field] = err.errors[field].message;
+        }
+        return res.status(400).json({
+            message: "Validation Error",
+            errors
+        });
+    }
+    
+    // Handle other errors
     res.status(500).json({
         message: "Internal Server Error",
         error: process.env.NODE_ENV === 'development' ? err.message : undefined
-    })
+    });
 }
 
 app.post("/register", async (req,res,next) =>{
@@ -212,6 +235,109 @@ app.put("/profile", authenticateToken, async (req,res,next) =>{
         next(error)
     }
 })
+
+// Workout Plan Schema Validation
+const workoutPlanSchema = z.object({
+    name: z.string().min(3).max(50),
+    description: z.string().max(200).optional(),
+    days: z.array(
+        z.object({
+            name: z.string(),
+            exercises: z.array(
+                z.object({
+                    id: z.string(),
+                    name: z.string(),
+                    muscle: z.string(),
+                    gif_url: z.string(),
+                    description1: z.string(),
+                    description2: z.string(),
+                    sets: z.number().optional(),
+                    reps: z.number().optional()
+                })
+            )
+        })
+    )
+})
+
+// Workout Plan Routes
+app.post('/api/workout-plans', authenticateToken, async (req, res, next) => {
+    try {
+        const validatedData = workoutPlanSchema.parse(req.body);
+        
+        const newWorkoutPlan = new WorkoutPlanModel({
+            userId: req.user.userId,
+            ...validatedData
+        });
+        
+        const savedPlan = await newWorkoutPlan.save();
+        res.status(201).json(savedPlan);
+    } catch (error) {
+        next(error);
+    }
+});
+
+app.get('/api/workout-plans', authenticateToken, async (req, res, next) => {
+    try {
+        const workoutPlans = await WorkoutPlanModel.find({ userId: req.user.userId });
+        res.status(200).json(workoutPlans);
+    } catch (error) {
+        next(error);
+    }
+});
+
+app.get('/api/workout-plans/:id', authenticateToken, async (req, res, next) => {
+    try {
+        const workoutPlan = await WorkoutPlanModel.findOne({ 
+            _id: req.params.id,
+            userId: req.user.userId
+        });
+        
+        if (!workoutPlan) {
+            return res.status(404).json({ message: 'Workout plan not found' });
+        }
+        
+        res.status(200).json(workoutPlan);
+    } catch (error) {
+        next(error);
+    }
+});
+
+app.put('/api/workout-plans/:id', authenticateToken, async (req, res, next) => {
+    try {
+        const validatedData = workoutPlanSchema.parse(req.body);
+        
+        const updatedPlan = await WorkoutPlanModel.findOneAndUpdate(
+            { _id: req.params.id, userId: req.user.userId },
+            validatedData,
+            { new: true }
+        );
+        
+        if (!updatedPlan) {
+            return res.status(404).json({ message: 'Workout plan not found' });
+        }
+        
+        res.status(200).json(updatedPlan);
+    } catch (error) {
+        next(error);
+    }
+});
+
+app.delete('/api/workout-plans/:id', authenticateToken, async (req, res, next) => {
+    try {
+        const deletedPlan = await WorkoutPlanModel.findOneAndDelete({
+            _id: req.params.id,
+            userId: req.user.userId
+        });
+        
+        if (!deletedPlan) {
+            return res.status(404).json({ message: 'Workout plan not found' });
+        }
+        
+        res.status(200).json({ message: 'Workout plan deleted successfully' });
+    } catch (error) {
+        next(error);
+    }
+});
 
 // Add a basic health check endpoint
 app.get("/health", (req, res) => {
