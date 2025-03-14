@@ -627,41 +627,6 @@ app.get("/health", (req, res) => {
     res.json({ status: "healthy" });
 });
 
-// Cloudinary configuration
-cloudinary.config({ 
-  cloud_name: 'dfm5hoz41', 
-  api_key: '258339917617439', 
-  api_secret: '1VJiAi9UPh9UJT9zt9VtiHu2L_Y' 
-});
-
-// Cloudinary image upload endpoint
-app.post('/api/upload-image', authenticateToken, async (req, res) => {
-  try {
-    const { image } = req.body;
-    
-    if (!image) {
-      return res.status(400).json({ error: 'No image provided' });
-    }
-    
-    // Upload image to Cloudinary
-    const uploadResult = await cloudinary.uploader.upload(image, {
-      folder: 'profile_pictures',
-      transformation: [
-        { width: 500, height: 500, crop: 'fill', gravity: 'auto' },
-        { fetch_format: 'auto', quality: 'auto' }
-      ]
-    });
-    
-    // Return the secure URL and public ID
-    res.json({
-      secure_url: uploadResult.secure_url,
-      public_id: uploadResult.public_id
-    });
-  } catch (error) {
-    console.error('Error uploading to Cloudinary:', error);
-    res.status(500).json({ error: 'Failed to upload image' });
-  }
-});
 
 app.use(errorHandeling)
  
