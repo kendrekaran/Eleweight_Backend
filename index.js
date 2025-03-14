@@ -4,12 +4,14 @@ const bcrypt = require('bcrypt')
 const mongoose = require('mongoose');
 const ProfileModel = require('./Models/profiles');
 const WorkoutPlanModel = require('./Models/workoutPlans');
+const FoodLogModel = require('./Models/foodLogs');
 const jwt = require("jsonwebtoken")
 const cors = require("cors")
+const cloudinary = require('cloudinary').v2;
 require('dotenv').config();
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 
 app.use(cors("*"));
 
@@ -339,9 +341,326 @@ app.delete('/api/workout-plans/:id', authenticateToken, async (req, res, next) =
     }
 });
 
+// User preferences schema
+const userPreferencesSchema = z.object({
+    weight: z.number().min(20).max(300).optional(),
+    height: z.number().min(100).max(250).optional(),
+    age: z.number().min(13).max(100).optional(),
+    gender: z.enum(['male', 'female', 'other']).optional(),
+    activityLevel: z.enum(['sedentary', 'lightly active', 'moderately active', 'very active', 'extremely active']).optional(),
+    dietType: z.enum(['vegetarian', 'non-vegetarian', 'vegan']).optional(),
+    fitnessGoals: z.array(z.string()).optional(),
+});
+
+// Food log schema
+const foodLogSchema = z.object({
+    date: z.string().optional(),
+    meal: z.object({
+        name: z.string(),
+        foodName: z.string(),
+        calories: z.number(),
+        protein: z.number(),
+        carbs: z.number(),
+        fats: z.number(),
+        mealTime: z.enum(['breakfast', 'lunch', 'dinner', 'snack']).optional()
+    })
+});
+
+// Calculate daily caloric and macronutrient needs based on user data
+const calculateNutritionNeeds = (weight, height, age, gender, activityLevel, dietType, fitnessGoals) => {
+    // Base metabolic rate (BMR) using Mifflin-St Jeor Equation
+    let bmr = 0;
+    if (gender === 'male') {
+        bmr = 10 * weight + 6.25 * height - 5 * age + 5;
+    } else {
+        bmr = 10 * weight + 6.25 * height - 5 * age - 161;
+    }
+    
+    // Activity multiplier
+    let activityMultiplier = 1.2; // sedentary
+    if (activityLevel === 'lightly active') activityMultiplier = 1.375;
+    else if (activityLevel === 'moderately active') activityMultiplier = 1.55;
+    else if (activityLevel === 'very active') activityMultiplier = 1.725;
+    else if (activityLevel === 'extremely active') activityMultiplier = 1.9;
+    
+    // Total Daily Energy Expenditure (TDEE)
+    let tdee = bmr * activityMultiplier;
+    
+    // Adjust based on fitness goals
+    if (fitnessGoals.includes('weight loss')) {
+        tdee = tdee * 0.85; // 15% deficit for weight loss
+    } else if (fitnessGoals.includes('muscle gain')) {
+        tdee = tdee * 1.1; // 10% surplus for muscle gain
+    }
+    
+    // Calculate macronutrients
+    let protein = 0, carbs = 0, fats = 0;
+    
+    // Protein: higher for muscle gain, moderate for weight loss
+    if (fitnessGoals.includes('muscle gain')) {
+        protein = weight * 2.2; // 2.2g per kg for muscle gain
+    } else if (fitnessGoals.includes('weight loss')) {
+        protein = weight * 2.0; // 2.0g per kg for weight loss
+    } else {
+        protein = weight * 1.6; // 1.6g per kg for maintenance
+    }
+    
+    // Fats: minimum 20% of calories
+    fats = (tdee * 0.25) / 9; // 25% of calories from fat, 9 calories per gram
+    
+    // Carbs: remaining calories
+    const proteinCalories = protein * 4; // 4 calories per gram
+    const fatCalories = fats * 9; // 9 calories per gram
+    carbs = (tdee - proteinCalories - fatCalories) / 4; // 4 calories per gram
+    
+    // Adjust for vegetarian/vegan (slightly higher carbs, lower protein)
+    if (dietType === 'vegetarian' || dietType === 'vegan') {
+        protein = protein * 0.9;
+        carbs = carbs * 1.1;
+    }
+    
+    return {
+        dailyCalorieNeeds: Math.round(tdee),
+        dailyProteinNeeds: Math.round(protein),
+        dailyCarbsNeeds: Math.round(carbs),
+        dailyFatsNeeds: Math.round(fats)
+    };
+};
+
+// Update user preferences
+app.put('/api/user-preferences', authenticateToken, async (req, res, next) => {
+    try {
+        const parseResult = userPreferencesSchema.safeParse(req.body);
+        if (!parseResult.success) {
+            return res.status(400).json({
+                message: "Validation Error",
+                errors: parseResult.error.errors
+            });
+        }
+        
+        const userId = req.user.userId;
+        const user = await ProfileModel.findById(userId);
+        
+        if (!user) {
+            return res.status(404).json({ message: "User not found" });
+        }
+        
+        // Update user preferences
+        const preferences = parseResult.data;
+        Object.keys(preferences).forEach(key => {
+            user[key] = preferences[key];
+        });
+        
+        // Calculate nutrition needs if we have enough data
+        if (user.weight && user.height && user.age && user.gender && user.activityLevel && user.dietType) {
+            const nutritionNeeds = calculateNutritionNeeds(
+                user.weight, 
+                user.height, 
+                user.age, 
+                user.gender, 
+                user.activityLevel, 
+                user.dietType, 
+                user.fitnessGoals || ['weight maintenance']
+            );
+            
+            user.dailyCalorieNeeds = nutritionNeeds.dailyCalorieNeeds;
+            user.dailyProteinNeeds = nutritionNeeds.dailyProteinNeeds;
+            user.dailyCarbsNeeds = nutritionNeeds.dailyCarbsNeeds;
+            user.dailyFatsNeeds = nutritionNeeds.dailyFatsNeeds;
+        }
+        
+        await user.save();
+        
+        return res.status(200).json({
+            message: "User preferences updated successfully",
+            user: {
+                name: user.name,
+                email: user.email,
+                weight: user.weight,
+                height: user.height,
+                age: user.age,
+                gender: user.gender,
+                activityLevel: user.activityLevel,
+                dietType: user.dietType,
+                fitnessGoals: user.fitnessGoals,
+                dailyCalorieNeeds: user.dailyCalorieNeeds,
+                dailyProteinNeeds: user.dailyProteinNeeds,
+                dailyCarbsNeeds: user.dailyCarbsNeeds,
+                dailyFatsNeeds: user.dailyFatsNeeds
+            }
+        });
+    } catch (error) {
+        next(error);
+    }
+});
+
+// Get user preferences
+app.get('/api/user-preferences', authenticateToken, async (req, res, next) => {
+    try {
+        const userId = req.user.userId;
+        const user = await ProfileModel.findById(userId);
+        
+        if (!user) {
+            return res.status(404).json({ message: "User not found" });
+        }
+        
+        return res.status(200).json({
+            user: {
+                name: user.name,
+                email: user.email,
+                weight: user.weight,
+                height: user.height,
+                age: user.age,
+                gender: user.gender,
+                activityLevel: user.activityLevel,
+                dietType: user.dietType,
+                fitnessGoals: user.fitnessGoals,
+                dailyCalorieNeeds: user.dailyCalorieNeeds,
+                dailyProteinNeeds: user.dailyProteinNeeds,
+                dailyCarbsNeeds: user.dailyCarbsNeeds,
+                dailyFatsNeeds: user.dailyFatsNeeds
+            }
+        });
+    } catch (error) {
+        next(error);
+    }
+});
+
+// Log food
+app.post('/api/food-log', authenticateToken, async (req, res, next) => {
+    try {
+        const parseResult = foodLogSchema.safeParse(req.body);
+        if (!parseResult.success) {
+            return res.status(400).json({
+                message: "Validation Error",
+                errors: parseResult.error.errors
+            });
+        }
+        
+        const userId = req.user.userId;
+        const { date, meal } = parseResult.data;
+        
+        // Parse date or use current date
+        const logDate = date ? new Date(date) : new Date();
+        // Set time to beginning of day for consistent date comparison
+        logDate.setHours(0, 0, 0, 0);
+        
+        // Find or create food log for this date
+        let foodLog = await FoodLogModel.findOne({ 
+            userId: userId,
+            date: {
+                $gte: logDate,
+                $lt: new Date(logDate.getTime() + 24 * 60 * 60 * 1000)
+            }
+        });
+        
+        if (!foodLog) {
+            foodLog = new FoodLogModel({
+                userId: userId,
+                date: logDate,
+                meals: [],
+                dailyTotals: {
+                    calories: 0,
+                    protein: 0,
+                    carbs: 0,
+                    fats: 0
+                }
+            });
+        }
+        
+        // Add meal to log
+        foodLog.meals.push(meal);
+        
+        // Update daily totals
+        foodLog.dailyTotals.calories += meal.calories || 0;
+        foodLog.dailyTotals.protein += meal.protein || 0;
+        foodLog.dailyTotals.carbs += meal.carbs || 0;
+        foodLog.dailyTotals.fats += meal.fats || 0;
+        
+        await foodLog.save();
+        
+        return res.status(201).json({
+            message: "Food logged successfully",
+            foodLog
+        });
+    } catch (error) {
+        next(error);
+    }
+});
+
+// Get food logs for a date range
+app.get('/api/food-logs', authenticateToken, async (req, res, next) => {
+    try {
+        const userId = req.user.userId;
+        const { startDate, endDate } = req.query;
+        
+        let start = startDate ? new Date(startDate) : new Date();
+        start.setHours(0, 0, 0, 0);
+        
+        let end = endDate ? new Date(endDate) : new Date(start);
+        end.setHours(23, 59, 59, 999);
+        
+        // If no dates provided, default to today
+        if (!startDate && !endDate) {
+            start = new Date();
+            start.setHours(0, 0, 0, 0);
+            end = new Date();
+            end.setHours(23, 59, 59, 999);
+        }
+        
+        const foodLogs = await FoodLogModel.find({
+            userId: userId,
+            date: {
+                $gte: start,
+                $lte: end
+            }
+        }).sort({ date: 1 });
+        
+        return res.status(200).json({ foodLogs });
+    } catch (error) {
+        next(error);
+    }
+});
+
 // Add a basic health check endpoint
 app.get("/health", (req, res) => {
     res.json({ status: "healthy" });
+});
+
+// Cloudinary configuration
+cloudinary.config({ 
+  cloud_name: 'dfm5hoz41', 
+  api_key: '258339917617439', 
+  api_secret: '1VJiAi9UPh9UJT9zt9VtiHu2L_Y' 
+});
+
+// Cloudinary image upload endpoint
+app.post('/api/upload-image', authenticateToken, async (req, res) => {
+  try {
+    const { image } = req.body;
+    
+    if (!image) {
+      return res.status(400).json({ error: 'No image provided' });
+    }
+    
+    // Upload image to Cloudinary
+    const uploadResult = await cloudinary.uploader.upload(image, {
+      folder: 'profile_pictures',
+      transformation: [
+        { width: 500, height: 500, crop: 'fill', gravity: 'auto' },
+        { fetch_format: 'auto', quality: 'auto' }
+      ]
+    });
+    
+    // Return the secure URL and public ID
+    res.json({
+      secure_url: uploadResult.secure_url,
+      public_id: uploadResult.public_id
+    });
+  } catch (error) {
+    console.error('Error uploading to Cloudinary:', error);
+    res.status(500).json({ error: 'Failed to upload image' });
+  }
 });
 
 app.use(errorHandeling)
